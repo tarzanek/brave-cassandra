@@ -13,16 +13,21 @@
  */
 package brave.scylla;
 
+import brave.scylla.dao.ScyllaEvent;
+import brave.scylla.dao.ScyllaSession;
+import com.datastax.driver.mapping.Mapper;
+import com.datastax.driver.mapping.MappingManager;
+import com.datastax.driver.mapping.Result;
 import com.scylladb.tracing.TraceState;
 
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.ResultSet;
-import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.PreparedStatement;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -33,6 +38,10 @@ public class ScyllaTracesLoader {
 
     static Cluster cluster = Cluster.builder().addContactPoints("localhost").build();
     static Session session = cluster.connect("system_traces");
+    static MappingManager manager = new MappingManager(session);
+
+    static Mapper<ScyllaSession> mapperSession = manager.mapper(ScyllaSession.class);
+    static Mapper<ScyllaEvent> mapperEvent = manager.mapper(ScyllaEvent.class);
 
     static PreparedStatement selectEvents = session.prepare("SELECT * FROM system_traces.events where session_id=?");
 
@@ -47,11 +56,13 @@ public class ScyllaTracesLoader {
         System.out.print("\n\nFetching sessions ...");
         ResultSet results = session.execute("SELECT * FROM system_traces.sessions");
         Map payload=new HashMap<String, ByteBuffer>();
-        for (Row row : results) {
+        Result<ScyllaSession> scyllaSessions = mapperSession.map(results);
+        for (ScyllaSession s : scyllaSessions) {
 //  session_id | client | command | coordinator | duration | parameters | request | request_size | response_size | started_at
-            UUID session_id = row.getUUID("session_id");
-            String command = row.getString("command");
-            InetAddress client = row.getInet("client");
+            UUID session_id = s.getSession_id();
+            String command = s.getCommand();
+            InetAddress client = s.getClient();
+            Date started_at = s.getStarted_at();
             if (command != null && command.isEmpty()) {
                 payload.put(ZIPKIN_TRACE_HEADERS, command);
             } else {
@@ -97,10 +108,11 @@ shared, debug=?
     public static void selectEvents(UUID sessionId, TraceState state, com.scylladb.tracing.Tracing tracing) {
         System.out.print("\n\nFetching events for session: "+sessionId+"  ...");
         ResultSet results = session.execute(selectEvents.bind(sessionId));
-        for (Row row : results) {
+        Result<ScyllaEvent> scyllaEvents = mapperEvent.map(results);
+        for (ScyllaEvent e : scyllaEvents) {
 //   session_id | event_id | activity | source | scylla_parent_id | scylla_span_id | source_elapsed | thread
-            String activity = row.getString("activity");
-            String thread = row.getString("thread");
+            String activity = e.getActivity();
+            String thread = e.getThread();
             ((Tracing.ZipkinTraceState)state).trace(activity);
         }
         tracing.doneWithNonLocalSession(state);
