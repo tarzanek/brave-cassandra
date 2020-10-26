@@ -109,7 +109,7 @@ public class ScyllaTracing  {
     /**
      * Represents a span from Scylla system_traces.events.
      */
-    public class ScyllaSpan {
+    public static class ScyllaSpan {
         public final long id;
         public ScyllaSpan parent = null;
         public List<ScyllaSpan> children = new ArrayList<ScyllaSpan>();
@@ -123,7 +123,7 @@ public class ScyllaTracing  {
      * Queries Scylla for a session's trace events and creates the corresponding graph of ScyllaSpan objects.
      * The graph is represented as a map from id to its node.
      */
-    public Map<Long, ScyllaSpan> makeSpanGraph(UUID sessionId) {
+    public static Map<Long, ScyllaSpan> makeSpanGraph(UUID sessionId) {
         HashMap<Long, ScyllaSpan> graph = new HashMap<Long, ScyllaSpan>();
         Result<ScyllaEvent> scyllaEvents = ScyllaTracesLoader.getScyllaEvents(sessionId);
         for (ScyllaEvent e : scyllaEvents) {
@@ -146,7 +146,7 @@ public class ScyllaTracing  {
     /**
      * Turns Scylla spans into Brave spans.
      */
-    public Map<Long, Span> makeSpans(Map<Long, ScyllaSpan> graph, Tracer tracer) {
+    public static Map<Long, Span> makeSpans(Map<Long, ScyllaSpan> graph, Tracer tracer) {
         HashMap<Long, Span> spans = new HashMap<Long, Span>();
         // The ScyllaSpan graph is a tree, so it can be sorted topologically by simple traversal from root.
         ScyllaSpan root = graph.get(0); // Scylla's tables use id 0 for fatherless spans; this translates to artificial root.
