@@ -22,7 +22,6 @@ import brave.propagation.TraceContextOrSamplingFlags;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
-import java.util.Date;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -89,11 +88,14 @@ public class ScyllaTracing  {
      * Otherwise, a new trace is created.
      */
     protected final UUID newSession(
-            UUID sessionId, Map<String, ByteBuffer> customPayload, Long startAt) {
+            UUID sessionId, Map<String, ByteBuffer> customPayload, Long startAt, String command) {
         Tracer tracer = tracing.tracer();
         Span span = spanFromPayload(tracer, customPayload).kind(SERVER);
         if (startAt != null) {
             span.start(startAt);
+        }
+        if (command!=null) {
+            span.name(command);
         }
 
 // override instead of call from super as otherwise we cannot store a reference to the span

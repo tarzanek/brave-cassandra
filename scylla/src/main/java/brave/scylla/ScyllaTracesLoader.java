@@ -33,8 +33,6 @@ import java.util.UUID;
 
 public class ScyllaTracesLoader {
 
-    public static final String ZIPKIN_TRACE_HEADERS = "zipkin";
-
     static Cluster cluster = Cluster.builder().addContactPoints("localhost").build();
     static Session session = cluster.connect("system_traces");
     static MappingManager manager = new MappingManager(session);
@@ -55,16 +53,14 @@ public class ScyllaTracesLoader {
 //  session_id | client | command | coordinator | duration | parameters | request | request_size | response_size | started_at
             UUID session_id = s.getSession_id();
             String command = s.getCommand();
+            Map<String,String> parameters = s.getParameters();
+            String query = parameters.get("query");
+            String request = s.getRequest();
             InetAddress client = s.getClient();
             Date started_at_row = s.getStarted_at();
             Long started_at = started_at_row.getTime()*1000;
             Integer duration = s.getDuration();
-            if (command != null && command.isEmpty()) {
-                payload.put(ZIPKIN_TRACE_HEADERS, command);
-            } else {
-                payload = new HashMap<String, ByteBuffer>();
-            }
-            tracing.newSession(session_id,payload,started_at);
+            tracing.newSession(session_id,payload,started_at, query);
             ScyllaTracing.ZipkinTraceState trace =
                     tracing.begin(command,client,new HashMap<String,String>(),started_at);
             selectEvents(session_id,trace, started_at);
