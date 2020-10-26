@@ -100,7 +100,7 @@ public class ScyllaTracing  {
 
 // override instead of call from super as otherwise we cannot store a reference to the span
         assert get() == null;
-        ZipkinTraceState state = new ZipkinTraceState(sessionId, span);
+        ZipkinTraceState state = new ZipkinTraceState(sessionId);
         set(state);
         sessions.put(sessionId, state);
         return sessionId;
@@ -164,29 +164,10 @@ public class ScyllaTracing  {
         return tracer.nextSpan(extracted);
     }
 
-    protected final void stopSessionImpl(Long ts) {
-        ZipkinTraceState state = (ZipkinTraceState) get();
-        if (state != null) state.incoming.finish(ts);
-    }
-
-
     public final ZipkinTraceState begin(
             String request, InetAddress client, Map<String, String> parameters, Long startAt) {
         ZipkinTraceState state = ((ZipkinTraceState) get());
-        Span span = state.incoming;
-        if (span.isNoop()) return state;
-
-// request name example: "Execute CQL3 prepared query"
-        parseRequest(state, request, parameters, span);
-// observed parameter keys include page_size, consistency_level, serial_consistency_level, query
-
-        span.remoteIpAndPort(client.getHostAddress(), 0);
-        if (startAt != null) {
-            span.start(startAt);
-//      span.start(startAt+1);
-        } else {
-            span.start();
-        }
+//        span.remoteIpAndPort(client.getHostAddress(), 0);
         return state;
     }
 
@@ -207,14 +188,11 @@ public class ScyllaTracing  {
     }
 
     static final class ZipkinTraceState  {
-        final public Span incoming;
-
-        ZipkinTraceState(UUID sessionId, Span incoming) {
-            this.incoming = incoming;
+        ZipkinTraceState(UUID sessionId) {
         }
 
         protected void traceImplTS(String message, Long ts) {
-            incoming.annotate(ts, message); // skip creating local spans for now
+            //incoming.annotate(ts, message); // skip creating local spans for now
         }
     }
 }

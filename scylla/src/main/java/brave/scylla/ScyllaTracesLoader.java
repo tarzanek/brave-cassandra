@@ -64,9 +64,6 @@ public class ScyllaTracesLoader {
             ScyllaTracing.ZipkinTraceState trace =
                     tracing.begin(command,client,new HashMap<String,String>(),started_at);
             selectEvents(session_id,trace, started_at);
-//            tracing.doneWithNonLocalSession(trace);
-            Long finished = started_at+duration;
-            tracing.stopSessionImpl(finished);
         }
     }
 
