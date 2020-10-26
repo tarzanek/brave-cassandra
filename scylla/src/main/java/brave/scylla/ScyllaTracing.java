@@ -113,6 +113,7 @@ public class ScyllaTracing  {
         public final long id;
         public ScyllaSpan parent = null;
         public List<ScyllaSpan> children = new ArrayList<ScyllaSpan>();
+        public long startTimestamp = Long.MAX_VALUE, endTimestamp = 0;
         public ScyllaSpan(Long id) {
             this.id = id;
         }
@@ -130,8 +131,14 @@ public class ScyllaTracing  {
             Long parentId = e.getScylla_parent_id();
             graph.putIfAbsent(id, new ScyllaSpan(id));
             graph.putIfAbsent(parentId, new ScyllaSpan(parentId));
-            graph.get(id).parent = graph.get(parentId);
-            graph.get(parentId).children.add(graph.get(id));
+            ScyllaSpan child = graph.get(id), parent = graph.get(parentId);
+            child.parent = parent;
+            parent.children.add(child);
+            long start = e.getEvent_id().timestamp() / 10; // Zipkin takes timestamps in microseconds.
+            child.startTimestamp = Math.min(child.startTimestamp, start);
+            // Scylla doesn't record when the event ended.  Assume it ended after 1us and see if this is the last event
+            // in the span.
+            child.endTimestamp = Math.max(child.endTimestamp, start + 1);
         }
         return graph;
     }
