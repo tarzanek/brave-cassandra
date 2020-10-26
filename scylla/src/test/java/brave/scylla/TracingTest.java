@@ -14,7 +14,6 @@
 package brave.scylla;
 
 import brave.propagation.StrictCurrentTraceContext;
-import brave.scylla.Tracing;
 import brave.test.TestSpanHandler;
 import java.nio.ByteBuffer;
 import java.util.Collections;
@@ -28,7 +27,7 @@ public class TracingTest {
   TestSpanHandler spans = new TestSpanHandler();
   brave.Tracing tracing = brave.Tracing.newBuilder()
       .currentTraceContext(currentTraceContext).addSpanHandler(spans).build();
-  Tracing cassandraTracing = new Tracing(tracing);
+  ScyllaTracing cassandraTracing = new ScyllaTracing(tracing);
 
   @After public void tearDown() {
     tracing.close();

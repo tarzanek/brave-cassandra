@@ -137,4 +137,14 @@ public class ScyllaEvent {
     public void setThread(String thread) {
         this.thread = thread;
     }
+
+    // This method comes from Hector's TimeUUIDUtils class:
+    // https://github.com/rantav/hector/blob/master/core/src/main/java/me/prettyprint/cassandra/utils/TimeUUIDUtils.java
+    static final long NUM_100NS_INTERVALS_SINCE_UUID_EPOCH = 0x01b21dd213814000L;
+    public static long getTimeFromUUID(UUID uuid) {
+        return (uuid.timestamp() - NUM_100NS_INTERVALS_SINCE_UUID_EPOCH) / 10000;
+    }
+    // see https://stackoverflow.com/questions/40459001/what-should-be-datatype-for-timeuuid-in-datastax-mapper-class
+    // makeEpoch()
+
 }

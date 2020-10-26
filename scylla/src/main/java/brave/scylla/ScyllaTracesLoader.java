@@ -18,7 +18,6 @@ import brave.scylla.dao.ScyllaSession;
 import com.datastax.driver.mapping.Mapper;
 import com.datastax.driver.mapping.MappingManager;
 import com.datastax.driver.mapping.Result;
-import com.scylladb.tracing.TraceState;
 
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.ResultSet;
@@ -45,14 +44,9 @@ public class ScyllaTracesLoader {
 
     static PreparedStatement selectEvents = session.prepare("SELECT * FROM system_traces.events where session_id=?");
 
-    static Tracing tracing;
+    static ScyllaTracing tracing;
 
-    public static void stop() {
-        cluster.close();
-        tracing.stopSessionImpl();
-    }
-
-    public static void selectSessions(com.scylladb.tracing.Tracing tracing) {
+    public static void selectSessions(ScyllaTracing tracing) {
         System.out.print("\n\nFetching sessions ...");
         ResultSet results = session.execute("SELECT * FROM system_traces.sessions");
         Map payload=new HashMap<String, ByteBuffer>();
@@ -62,17 +56,21 @@ public class ScyllaTracesLoader {
             UUID session_id = s.getSession_id();
             String command = s.getCommand();
             InetAddress client = s.getClient();
-            Date started_at = s.getStarted_at();
+            Date started_at_row = s.getStarted_at();
+            Long started_at = started_at_row.getTime()*1000;
+            Integer duration = s.getDuration();
             if (command != null && command.isEmpty()) {
                 payload.put(ZIPKIN_TRACE_HEADERS, command);
             } else {
                 payload = new HashMap<String, ByteBuffer>();
             }
-            tracing.newSession(session_id,payload);
-            TraceState trace = null;
-            trace = tracing.begin(command,client,new HashMap<String,String>());
-            selectEvents(session_id,trace, tracing);
-            tracing.stopSession();
+            tracing.newSession(session_id,payload,started_at);
+            ScyllaTracing.ZipkinTraceState trace =
+                    tracing.begin(command,client,new HashMap<String,String>(),started_at);
+            selectEvents(session_id,trace, started_at);
+//            tracing.doneWithNonLocalSession(trace);
+            Long finished = started_at+duration;
+            tracing.stopSessionImpl(finished);
         }
     }
 
@@ -105,17 +103,19 @@ shared, debug=?
      */
 
 
-    public static void selectEvents(UUID sessionId, TraceState state, com.scylladb.tracing.Tracing tracing) {
+    public static void selectEvents(UUID sessionId, ScyllaTracing.ZipkinTraceState state, Long startAt) {
         System.out.print("\n\nFetching events for session: "+sessionId+"  ...");
         ResultSet results = session.execute(selectEvents.bind(sessionId));
         Result<ScyllaEvent> scyllaEvents = mapperEvent.map(results);
+        Long ts = startAt;
         for (ScyllaEvent e : scyllaEvents) {
 //   session_id | event_id | activity | source | scylla_parent_id | scylla_span_id | source_elapsed | thread
             String activity = e.getActivity();
-            String thread = e.getThread();
-            ((Tracing.ZipkinTraceState)state).trace(activity);
+            Integer source_elapsed = e.getSource_elapsed();
+            Long finishts = startAt+source_elapsed;
+            state.traceImplTS(activity, finishts);
+            ts=ts+source_elapsed;
         }
-        tracing.doneWithNonLocalSession(state);
     }
 
     //Indexes:
@@ -132,16 +132,11 @@ shared, debug=?
 
         System.setProperty("zipkin.http_endpoint", "http://127.0.0.1:9411/api/v2/spans"); //
         System.setProperty("zipkin.service_name", "scylla");
-        tracing = new Tracing();
+        tracing = new ScyllaTracing();
 
         selectSessions(tracing);
 
-
-
         cluster.close();
-
-        tracing.stopSession();
-        stop();
 
 //        System.exit(0);
 
