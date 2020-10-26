@@ -19,17 +19,17 @@ import brave.Tracer;
 import brave.internal.Nullable;
 import brave.propagation.B3SingleFormat;
 import brave.propagation.TraceContextOrSamplingFlags;
-
-import java.net.InetAddress;
-import java.nio.ByteBuffer;
-import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-
+import brave.scylla.dao.ScyllaEvent;
+import com.datastax.driver.mapping.Result;
 import io.netty.util.concurrent.FastThreadLocal;
 import zipkin2.reporter.brave.AsyncZipkinSpanHandler;
 import zipkin2.reporter.urlconnection.URLConnectionSender;
+
+import java.net.InetAddress;
+import java.nio.ByteBuffer;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import static brave.Span.Kind.SERVER;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -104,6 +104,53 @@ public class ScyllaTracing  {
         set(state);
         sessions.put(sessionId, state);
         return sessionId;
+    }
+
+    /**
+     * Represents a span from Scylla system_traces.events.
+     */
+    public class ScyllaSpan {
+        public final long id;
+        public ScyllaSpan parent = null;
+        public List<ScyllaSpan> children = new ArrayList<ScyllaSpan>();
+        public ScyllaSpan(Long id) {
+            this.id = id;
+        }
+    }
+
+    /**
+     * Queries Scylla for a session's trace events and creates the corresponding graph of ScyllaSpan objects.
+     * The graph is represented as a map from id to its node.
+     */
+    public Map<Long, ScyllaSpan> makeSpanGraph(UUID sessionId) {
+        HashMap<Long, ScyllaSpan> graph = new HashMap<Long, ScyllaSpan>();
+        Result<ScyllaEvent> scyllaEvents = ScyllaTracesLoader.getScyllaEvents(sessionId);
+        for (ScyllaEvent e : scyllaEvents) {
+            Long id = e.getScylla_span_id();
+            Long parentId = e.getScylla_parent_id();
+            graph.putIfAbsent(id, new ScyllaSpan(id));
+            graph.putIfAbsent(parentId, new ScyllaSpan(parentId));
+            graph.get(id).parent = graph.get(parentId);
+            graph.get(parentId).children.add(graph.get(id));
+        }
+        return graph;
+    }
+
+    /**
+     * Turns Scylla spans into Brave spans.
+     */
+    public Map<Long, Span> makeSpans(Map<Long, ScyllaSpan> graph, Tracer tracer) {
+        HashMap<Long, Span> spans = new HashMap<Long, Span>();
+        // The ScyllaSpan graph is a tree, so it can be sorted topologically by simple traversal from root.
+        ScyllaSpan root = graph.get(0); // Scylla's tables use id 0 for fatherless spans; this translates to artificial root.
+        ArrayList<ScyllaSpan> workList = new ArrayList<ScyllaSpan>(root.children);
+        while (!workList.isEmpty()) {
+            ScyllaSpan node = workList.remove(0);
+            workList.addAll(node.children);
+            spans.put(node.id,
+                    (node.parent.id == 0) ? tracer.newTrace() : tracer.newChild(spans.get(node.parent.id).context()));
+        }
+        return spans;
     }
 
     /**
