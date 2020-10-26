@@ -101,8 +101,7 @@ shared, debug=?
 
     public static void selectEvents(UUID sessionId, ScyllaTracing.ZipkinTraceState state, Long startAt) {
         System.out.print("\n\nFetching events for session: "+sessionId+"  ...");
-        ResultSet results = session.execute(selectEvents.bind(sessionId));
-        Result<ScyllaEvent> scyllaEvents = mapperEvent.map(results);
+        Result<ScyllaEvent> scyllaEvents = getScyllaEvents(sessionId);
         Long ts = startAt;
         for (ScyllaEvent e : scyllaEvents) {
 //   session_id | event_id | activity | source | scylla_parent_id | scylla_span_id | source_elapsed | thread
@@ -112,6 +111,10 @@ shared, debug=?
             state.traceImplTS(activity, finishts);
             ts=ts+source_elapsed;
         }
+    }
+
+    public static Result<ScyllaEvent> getScyllaEvents(UUID sessionId) {
+        return mapperEvent.map(session.execute(selectEvents.bind(sessionId)));
     }
 
     //Indexes:
