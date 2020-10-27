@@ -25,7 +25,6 @@ import com.datastax.driver.mapping.MappingManager;
 import com.datastax.driver.mapping.Result;
 
 import java.net.InetAddress;
-import java.nio.ByteBuffer;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -47,7 +46,6 @@ public class ScyllaTracesLoader {
     public static void selectSessions(ScyllaTracing tracing) {
         System.out.print("\n\nFetching sessions ...");
         ResultSet results = session.execute("SELECT * FROM system_traces.sessions");
-        Map payload=new HashMap<String, ByteBuffer>();
         Result<ScyllaSession> scyllaSessions = mapperSession.map(results);
         for (ScyllaSession s : scyllaSessions) {
 //  session_id | client | command | coordinator | duration | parameters | request | request_size | response_size | started_at
@@ -55,12 +53,10 @@ public class ScyllaTracesLoader {
             String command = s.getCommand();
             Map<String,String> parameters = s.getParameters();
             String query = parameters.get("query");
-            String request = s.getRequest();
             InetAddress client = s.getClient();
             Date started_at_row = s.getStarted_at();
             Long started_at = started_at_row.getTime()*1000;
-            Integer duration = s.getDuration();
-            tracing.newSession(session_id,payload,started_at, query);
+            tracing.newSession(session_id, new HashMap<>(),started_at, query);
             // create spans
             Map<Long, ScyllaTracing.ScyllaSpan> scyllaSpans = ScyllaTracing.makeSpanGraph(session_id);
             Map<Long, Span> braveSpans = ScyllaTracing.makeSpans(scyllaSpans, tracing.tracing.tracer());
@@ -70,7 +66,7 @@ public class ScyllaTracesLoader {
                 bspan.getValue().start(scyllaSpans.get(bspan.getKey()).startTimestamp);
             }
             ScyllaTracing.ZipkinTraceState trace =
-                    tracing.begin(command,client,new HashMap<String,String>(),started_at);
+                    tracing.begin(command,client, new HashMap<>(),started_at);
             // annotate spans from events
             selectEvents(session_id, trace, started_at, braveSpans);
             // finish each span
@@ -121,7 +117,7 @@ shared, debug=?
 //   session_id | event_id | activity | source | scylla_parent_id | scylla_span_id | source_elapsed | thread
             String activity = e.getActivity();
             Integer source_elapsed = e.getSource_elapsed();
-            Long finishts = startAt+source_elapsed;
+            long finishts = startAt+source_elapsed;
             state.traceImplTS(activity, finishts);
             ts=ts+source_elapsed;
             spans.get(e.getScylla_span_id()).annotate(finishts, activity);
