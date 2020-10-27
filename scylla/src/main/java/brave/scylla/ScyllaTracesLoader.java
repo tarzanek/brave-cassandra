@@ -15,14 +15,13 @@ package brave.scylla;
 
 import brave.scylla.dao.ScyllaEvent;
 import brave.scylla.dao.ScyllaSession;
+import com.datastax.driver.core.Cluster;
+import com.datastax.driver.core.PreparedStatement;
+import com.datastax.driver.core.ResultSet;
+import com.datastax.driver.core.Session;
 import com.datastax.driver.mapping.Mapper;
 import com.datastax.driver.mapping.MappingManager;
 import com.datastax.driver.mapping.Result;
-
-import com.datastax.driver.core.Cluster;
-import com.datastax.driver.core.ResultSet;
-import com.datastax.driver.core.Session;
-import com.datastax.driver.core.PreparedStatement;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
