@@ -112,7 +112,7 @@ public class ScyllaTracing  {
     public static class ScyllaSpan {
         public final long id;
         public ScyllaSpan parent = null;
-        public List<ScyllaSpan> children = new ArrayList<ScyllaSpan>();
+        public Set<ScyllaSpan> children = new HashSet<>();
         public long startTimestamp = Long.MAX_VALUE, endTimestamp = 0;
         public ScyllaSpan(Long id) {
             this.id = id;
