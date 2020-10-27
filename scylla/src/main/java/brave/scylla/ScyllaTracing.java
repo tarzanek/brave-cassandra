@@ -19,17 +19,17 @@ import brave.Tracer;
 import brave.internal.Nullable;
 import brave.propagation.B3SingleFormat;
 import brave.propagation.TraceContextOrSamplingFlags;
-
-import java.net.InetAddress;
-import java.nio.ByteBuffer;
-import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-
+import brave.scylla.dao.ScyllaEvent;
+import com.datastax.driver.mapping.Result;
 import io.netty.util.concurrent.FastThreadLocal;
 import zipkin2.reporter.brave.AsyncZipkinSpanHandler;
 import zipkin2.reporter.urlconnection.URLConnectionSender;
+
+import java.net.InetAddress;
+import java.nio.ByteBuffer;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import static brave.Span.Kind.SERVER;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -100,10 +100,64 @@ public class ScyllaTracing  {
 
 // override instead of call from super as otherwise we cannot store a reference to the span
         assert get() == null;
-        ZipkinTraceState state = new ZipkinTraceState(sessionId, span);
+        ZipkinTraceState state = new ZipkinTraceState(sessionId);
         set(state);
         sessions.put(sessionId, state);
         return sessionId;
+    }
+
+    /**
+     * Represents a span from Scylla system_traces.events.
+     */
+    public static class ScyllaSpan {
+        public final long id;
+        public ScyllaSpan parent = null;
+        public List<ScyllaSpan> children = new ArrayList<ScyllaSpan>();
+        public long startTimestamp = Long.MAX_VALUE, endTimestamp = 0;
+        public ScyllaSpan(Long id) {
+            this.id = id;
+        }
+    }
+
+    /**
+     * Queries Scylla for a session's trace events and creates the corresponding graph of ScyllaSpan objects.
+     * The graph is represented as a map from id to its node.
+     */
+    public static Map<Long, ScyllaSpan> makeSpanGraph(UUID sessionId) {
+        HashMap<Long, ScyllaSpan> graph = new HashMap<Long, ScyllaSpan>();
+        Result<ScyllaEvent> scyllaEvents = ScyllaTracesLoader.getScyllaEvents(sessionId);
+        for (ScyllaEvent e : scyllaEvents) {
+            Long id = e.getScylla_span_id();
+            Long parentId = e.getScylla_parent_id();
+            graph.putIfAbsent(id, new ScyllaSpan(id));
+            graph.putIfAbsent(parentId, new ScyllaSpan(parentId));
+            ScyllaSpan child = graph.get(id), parent = graph.get(parentId);
+            child.parent = parent;
+            parent.children.add(child);
+            long start = e.getEvent_id().timestamp() / 10; // Zipkin takes timestamps in microseconds.
+            child.startTimestamp = Math.min(child.startTimestamp, start);
+            // Scylla doesn't record when the event ended.  Assume it ended after 1us and see if this is the last event
+            // in the span.
+            child.endTimestamp = Math.max(child.endTimestamp, start + 1);
+        }
+        return graph;
+    }
+
+    /**
+     * Turns Scylla spans into Brave spans.
+     */
+    public static Map<Long, Span> makeSpans(Map<Long, ScyllaSpan> graph, Tracer tracer) {
+        HashMap<Long, Span> spans = new HashMap<Long, Span>();
+        // The ScyllaSpan graph is a tree, so it can be sorted topologically by simple traversal from root.
+        ScyllaSpan root = graph.get(Long.valueOf(0)); // Scylla's tables use id 0 for fatherless spans; this translates to artificial root.
+        ArrayList<ScyllaSpan> workList = new ArrayList<ScyllaSpan>(root.children);
+        while (!workList.isEmpty()) {
+            ScyllaSpan node = workList.remove(0);
+            workList.addAll(node.children);
+            spans.put(node.id,
+                    (node.parent.id == 0) ? tracer.newTrace() : tracer.newChild(spans.get(node.parent.id).context()));
+        }
+        return spans;
     }
 
     /**
@@ -117,29 +171,10 @@ public class ScyllaTracing  {
         return tracer.nextSpan(extracted);
     }
 
-    protected final void stopSessionImpl(Long ts) {
-        ZipkinTraceState state = (ZipkinTraceState) get();
-        if (state != null) state.incoming.finish(ts);
-    }
-
-
     public final ZipkinTraceState begin(
             String request, InetAddress client, Map<String, String> parameters, Long startAt) {
         ZipkinTraceState state = ((ZipkinTraceState) get());
-        Span span = state.incoming;
-        if (span.isNoop()) return state;
-
-// request name example: "Execute CQL3 prepared query"
-        parseRequest(state, request, parameters, span);
-// observed parameter keys include page_size, consistency_level, serial_consistency_level, query
-
-        span.remoteIpAndPort(client.getHostAddress(), 0);
-        if (startAt != null) {
-            span.start(startAt);
-//      span.start(startAt+1);
-        } else {
-            span.start();
-        }
+//        span.remoteIpAndPort(client.getHostAddress(), 0);
         return state;
     }
 
@@ -160,14 +195,11 @@ public class ScyllaTracing  {
     }
 
     static final class ZipkinTraceState  {
-        final public Span incoming;
-
-        ZipkinTraceState(UUID sessionId, Span incoming) {
-            this.incoming = incoming;
+        ZipkinTraceState(UUID sessionId) {
         }
 
         protected void traceImplTS(String message, Long ts) {
-            incoming.annotate(ts, message); // skip creating local spans for now
+            //incoming.annotate(ts, message); // skip creating local spans for now
         }
     }
 }

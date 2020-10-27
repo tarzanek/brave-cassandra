@@ -13,19 +13,18 @@
  */
 package brave.scylla;
 
+import brave.Span;
 import brave.scylla.dao.ScyllaEvent;
 import brave.scylla.dao.ScyllaSession;
+import com.datastax.driver.core.Cluster;
+import com.datastax.driver.core.PreparedStatement;
+import com.datastax.driver.core.ResultSet;
+import com.datastax.driver.core.Session;
 import com.datastax.driver.mapping.Mapper;
 import com.datastax.driver.mapping.MappingManager;
 import com.datastax.driver.mapping.Result;
 
-import com.datastax.driver.core.Cluster;
-import com.datastax.driver.core.ResultSet;
-import com.datastax.driver.core.Session;
-import com.datastax.driver.core.PreparedStatement;
-
 import java.net.InetAddress;
-import java.nio.ByteBuffer;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -47,7 +46,6 @@ public class ScyllaTracesLoader {
     public static void selectSessions(ScyllaTracing tracing) {
         System.out.print("\n\nFetching sessions ...");
         ResultSet results = session.execute("SELECT * FROM system_traces.sessions");
-        Map payload=new HashMap<String, ByteBuffer>();
         Result<ScyllaSession> scyllaSessions = mapperSession.map(results);
         for (ScyllaSession s : scyllaSessions) {
 //  session_id | client | command | coordinator | duration | parameters | request | request_size | response_size | started_at
@@ -55,18 +53,30 @@ public class ScyllaTracesLoader {
             String command = s.getCommand();
             Map<String,String> parameters = s.getParameters();
             String query = parameters.get("query");
-            String request = s.getRequest();
             InetAddress client = s.getClient();
             Date started_at_row = s.getStarted_at();
             Long started_at = started_at_row.getTime()*1000;
-            Integer duration = s.getDuration();
-            tracing.newSession(session_id,payload,started_at, query);
+            tracing.newSession(session_id, new HashMap<>(),started_at, query);
+            // create spans
+            Map<Long, ScyllaTracing.ScyllaSpan> scyllaSpans = ScyllaTracing.makeSpanGraph(session_id);
+            Map<Long, Span> braveSpans = ScyllaTracing.makeSpans(scyllaSpans, tracing.tracing.tracer());
+            // add each span's start, name, kind, remote endpoint
+            for (Map.Entry<Long, Span> bspan : braveSpans.entrySet()) {
+                bspan.getValue().name(query).kind(Span.Kind.SERVER).remoteIpAndPort(client.getHostAddress(), 0);
+                bspan.getValue().start(scyllaSpans.get(bspan.getKey()).startTimestamp);
+            }
             ScyllaTracing.ZipkinTraceState trace =
-                    tracing.begin(command,client,new HashMap<String,String>(),started_at);
-            selectEvents(session_id,trace, started_at);
-//            tracing.doneWithNonLocalSession(trace);
-            Long finished = started_at+duration;
-            tracing.stopSessionImpl(finished);
+                    tracing.begin(command,client, new HashMap<>(),started_at);
+            // annotate spans from events
+            selectEvents(session_id, trace, started_at, braveSpans);
+            // finish each span
+            long traceId = 0;
+            for (Map.Entry<Long, Span> bspan : braveSpans.entrySet()) {
+                bspan.getValue().finish(scyllaSpans.get(bspan.getKey()).endTimestamp);
+                traceId = bspan.getValue().context().traceId();
+            }
+            // print the Zipkin traceId so the user can search for it.
+            System.out.println("Generating Zipkin traceId " + Long.toHexString(traceId));
         }
     }
 
@@ -99,19 +109,23 @@ shared, debug=?
      */
 
 
-    public static void selectEvents(UUID sessionId, ScyllaTracing.ZipkinTraceState state, Long startAt) {
+    public static void selectEvents(UUID sessionId, ScyllaTracing.ZipkinTraceState state, Long startAt, Map<Long, Span> spans) {
         System.out.print("\n\nFetching events for session: "+sessionId+"  ...");
-        ResultSet results = session.execute(selectEvents.bind(sessionId));
-        Result<ScyllaEvent> scyllaEvents = mapperEvent.map(results);
+        Result<ScyllaEvent> scyllaEvents = getScyllaEvents(sessionId);
         Long ts = startAt;
         for (ScyllaEvent e : scyllaEvents) {
 //   session_id | event_id | activity | source | scylla_parent_id | scylla_span_id | source_elapsed | thread
             String activity = e.getActivity();
             Integer source_elapsed = e.getSource_elapsed();
-            Long finishts = startAt+source_elapsed;
+            long finishts = startAt+source_elapsed;
             state.traceImplTS(activity, finishts);
             ts=ts+source_elapsed;
+            spans.get(e.getScylla_span_id()).annotate(finishts, activity);
         }
+    }
+
+    public static Result<ScyllaEvent> getScyllaEvents(UUID sessionId) {
+        return mapperEvent.map(session.execute(selectEvents.bind(sessionId)));
     }
 
     //Indexes:
@@ -132,6 +146,7 @@ shared, debug=?
 
         selectSessions(tracing);
 
+        tracing.tracing.close();
         cluster.close();
 
 //        System.exit(0);
