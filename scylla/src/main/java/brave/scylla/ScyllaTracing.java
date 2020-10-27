@@ -149,7 +149,7 @@ public class ScyllaTracing  {
     public static Map<Long, Span> makeSpans(Map<Long, ScyllaSpan> graph, Tracer tracer) {
         HashMap<Long, Span> spans = new HashMap<Long, Span>();
         // The ScyllaSpan graph is a tree, so it can be sorted topologically by simple traversal from root.
-        ScyllaSpan root = graph.get(0); // Scylla's tables use id 0 for fatherless spans; this translates to artificial root.
+        ScyllaSpan root = graph.get(Long.valueOf(0)); // Scylla's tables use id 0 for fatherless spans; this translates to artificial root.
         ArrayList<ScyllaSpan> workList = new ArrayList<ScyllaSpan>(root.children);
         while (!workList.isEmpty()) {
             ScyllaSpan node = workList.remove(0);
